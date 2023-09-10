@@ -1,0 +1,30 @@
+[
+  {
+    "category": "History",
+    "type": "multiple",
+    "difficulty": "hard",
+    "question": "On which day did ARPANET suffer a 4 hour long network crash?",
+    "correct_answer": "October 27, 1980",
+    "incorrect_answers": [
+      "November 21, 1969",
+      "October 29, 1969",
+      "December 9, 1991"
+    ]
+  },
+  {
+    "category": "History",
+    "type": "multiple",
+    "difficulty": "medium",
+    "question": "How old was Lyndon B. Johnson when he assumed the role of President of the United States?",
+    "correct_answer": "55",
+    "incorrect_answers": ["50", "60", "54"]
+  },
+  {
+    "category": "History",
+    "type": "multiple",
+    "difficulty": "medium",
+    "question": "Which Apollo mission was the last one in NASA's Apollo program?",
+    "correct_answer": "Apollo 17",
+    "incorrect_answers": ["Apollo 13", "Apollo 11", "Apollo 15"]
+  }
+]
