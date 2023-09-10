@@ -43,4 +43,4 @@ Usage of ./bin/client:
 
 
 ## License
-[LICENSE](github.com/Lastin/pub-sub-quiz/blob/master/LICENSE.txt)
+[LICENSE](github.com/Lastin/pub-sub-quiz/blob/master/LICENSE)
