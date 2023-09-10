@@ -1,0 +1,72 @@
+syntax = "proto3";
+
+option go_package = "github.com/Lastin/pub-sub-quiz";
+
+package pubSubQuiz;
+
+service Quiz {
+  rpc Play(stream PlayRequest) returns (stream PlayResponse) {}
+}
+
+message PlayRequest {
+  message Join {
+  }
+
+  message Answer {
+    string questionId = 1;
+    string answer = 2;
+  }
+
+  oneof msg {
+    Join join_request = 1;
+    Answer answer_request = 2;
+  }
+}
+
+
+message PlayResponse {
+  message QuizQuestion {
+    string questionId = 3;
+    string question = 4;
+    repeated string answers = 5;
+    double questionTimeout = 6;
+  }
+
+  message JoinResponse {
+    bool success = 1;
+    string reason = 2;
+    int32 currentPlayers = 3;
+    int32 targetPlayers = 4;
+    string playerId = 5;
+  }
+
+  message AnswerRejected {
+    string reason = 1;
+  }
+
+  message GameStartsIn {
+    double secondsUntilStart = 1;
+  }
+
+  message Score {
+    string playerId = 1;
+    int32 score = 2;
+  }
+
+  message GameEnds {
+    repeated Score leaderboard = 1;
+  }
+
+  message StartInterrupted {
+    string reason = 1;
+  }
+
+  oneof msg {
+    QuizQuestion questionMsg = 1;
+    JoinResponse joinResponseMsg = 2;
+    AnswerRejected answerRejectionMsg = 3;
+    GameEnds gameEndsMsg = 4;
+    GameStartsIn gameStartsInMsg = 5;
+    StartInterrupted startInterruptedMsg = 6;
+  }
+}
