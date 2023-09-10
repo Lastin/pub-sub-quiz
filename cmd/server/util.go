@@ -30,6 +30,7 @@ func mapQuestions(questions []Question) map[string]Question {
 }
 
 func loadQuestions() ([]Question, error) {
+	log.Printf("Loading questions from %s\n", *questionFile)
 	b, err := os.ReadFile(*questionFile)
 	if err != nil {
 		return nil, err

@@ -13,7 +13,9 @@ var port = flag.Int("port", 50052, "port number")
 var startDelay = flag.Duration("startDelay", 10*time.Second, "Delay before starting the quiz")
 
 func main() {
+	// Initialise the flags
 	flag.Parse()
+	// Load the questions from the JSON file
 	questions, err := loadQuestions()
 	if err != nil {
 		log.Fatal(err)

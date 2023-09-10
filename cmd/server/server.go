@@ -14,10 +14,13 @@ import (
 	"time"
 )
 
+// gRPC keepalive settings
 var kaep = keepalive.EnforcementPolicy{
 	MinTime:             1 * time.Second,
 	PermitWithoutStream: true,
 }
+
+// gRPC keepalive settings
 var kasp = keepalive.ServerParameters{
 	MaxConnectionIdle:     1 * time.Second,
 	MaxConnectionAgeGrace: 1 * time.Second,
@@ -25,20 +28,18 @@ var kasp = keepalive.ServerParameters{
 	Timeout:               1 * time.Second,
 }
 
+// Question representation from the JSON file
 type Question struct {
 	Question         string   `json:"question"`
 	CorrectAnswer    string   `json:"correct_answer"`
 	IncorrectAnswers []string `json:"incorrect_answers"`
 }
 
+// Player represents an entity that is connected to the server and plays the game
 type Player struct {
 	Uuid   string
 	Score  int32
 	stream pb.Quiz_PlayServer
-}
-
-func (player *Player) GetDisconnectMessage() string {
-	return fmt.Sprintf("Player %s disconnected", player.Uuid)
 }
 
 type Server struct {
@@ -88,6 +89,7 @@ func (s *Server) Start() error {
 	return rpcServer.Serve(lis)
 }
 
+// Play is the gRPC method that handles the communication with the client
 func (s *Server) Play(stream pb.Quiz_PlayServer) error {
 	player := &Player{
 		uuid.NewString(),
@@ -112,6 +114,7 @@ func (s *Server) Play(stream pb.Quiz_PlayServer) error {
 	}
 }
 
+// handleMessage handles the incoming messages from the client
 func (s *Server) handleMessage(msg *pb.PlayRequest, stream pb.Quiz_PlayServer, player *Player) {
 	var err error
 	switch v := msg.Msg.(type) {
@@ -125,11 +128,12 @@ func (s *Server) handleMessage(msg *pb.PlayRequest, stream pb.Quiz_PlayServer, p
 	}
 }
 
+// HandleJoinMsg handles the join request from the client
 func (s *Server) HandleJoinMsg(stream pb.Quiz_PlayServer, player *Player) error {
 	log.Printf("Received join request: %s\n", player.Uuid)
 	s.mutex.Lock()
 	defer s.mutex.Unlock()
-	if s.state != QuizStateWaitingForPlayers {
+	if s.state != QuizStateWaitingForPlayers { // check players can still join
 		log.Printf("Game in state %s\n, rejecting join request", s.state)
 		err := stream.Send(&pb.PlayResponse{
 			Msg: &pb.PlayResponse_JoinResponseMsg{
@@ -171,6 +175,7 @@ func (s *Server) HandleJoinMsg(stream pb.Quiz_PlayServer, player *Player) error 
 	return err
 }
 
+// HandleAnswerMsg handles the answer request from the client
 func (s *Server) HandleAnswerMsg(player *Player, stream pb.Quiz_PlayServer, ar *pb.PlayRequest_Answer) error {
 	log.Println("Received answer request")
 	s.mutex.RLock()
@@ -208,6 +213,7 @@ func (s *Server) HandleAnswerMsg(player *Player, stream pb.Quiz_PlayServer, ar *
 	return nil
 }
 
+// resetState resets the server to the initial state
 func (s *Server) resetState() {
 	log.Printf("Resetting the server")
 	s.mutex.Lock()
@@ -219,26 +225,33 @@ func (s *Server) resetState() {
 
 }
 
+// runQuizLoop main loop responsible for running the quiz
 func (s *Server) runQuizLoop() {
 	defer func() {
 		log.Println("Game finished")
 		s.resetState()
 	}()
+
+	// update the state to prevent other players from joining
 	s.state = QuizStateStarting
 	quizStartTime := time.Now().Add(s.startDelay)
 	log.Printf("Starting quiz with %v players in %.f seconds\n", len(s.players), time.Until(quizStartTime).Seconds())
 	ctx, cancel := context.WithTimeout(context.Background(), s.startDelay)
-	go s.pingStart(ctx, quizStartTime)
+	// start a goroutine that pings client when the game is about to begin
+	go s.pingUsersGetReady(ctx, quizStartTime)
+
 	select {
 	case <-ctx.Done():
 		log.Println("Game starting")
 		cancel()
-	case playerId := <-s.disconnectChan:
+	case playerId := <-s.disconnectChan: // if a player disconnects, abort the game
 		log.Printf("Player %s disconnected", playerId)
 		cancel()
 		s.informAllInterrupt(fmt.Sprintf("Player %s has disconnected. Stopping the game", playerId))
 		return
 	}
+
+	// update the state to enable receiving the answers
 	s.mutex.Lock()
 	s.state = QuizStateQuestion
 	s.mutex.Unlock()
@@ -248,11 +261,15 @@ func (s *Server) runQuizLoop() {
 			break
 		}
 		log.Printf("Sending question %v\n", id)
+
 		go s.sendAllQuestion(id, q)
 		log.Printf("Waiting for answers")
+
 		s.mutex.Lock()
 		s.currentQuestionId = id
 		s.mutex.Unlock()
+
+		// Wait to collect the answers
 		time.Sleep(s.questionTimeout + time.Second)
 		log.Printf("Finished waiting for answers for question %v\n", id)
 	}
@@ -265,7 +282,9 @@ func (s *Server) runQuizLoop() {
 	s.informAllEnd(leaderboard)
 }
 
-func (s *Server) pingStart(ctx context.Context, startTime time.Time) {
+// Pings all players every second to inform them about the game start
+// Stops when the context is cancelled
+func (s *Server) pingUsersGetReady(ctx context.Context, startTime time.Time) {
 	for {
 		select {
 		case <-time.Tick(time.Second):
@@ -276,6 +295,7 @@ func (s *Server) pingStart(ctx context.Context, startTime time.Time) {
 	}
 }
 
+// Inform all players that the game is about to begin
 func (s *Server) informAllStartsIn(startTime time.Time) {
 	msg := &pb.PlayResponse{
 		Msg: &pb.PlayResponse_GameStartsInMsg{
@@ -300,17 +320,18 @@ func (s *Server) informAllStartsIn(startTime time.Time) {
 	wg.Wait()
 }
 
+// Inform all players that the game has ended
 func (s *Server) informAllEnd(leaaderboard []*pb.PlayResponse_Score) {
+	msg := &pb.PlayResponse{
+		Msg: &pb.PlayResponse_GameEndsMsg{
+			GameEndsMsg: &pb.PlayResponse_GameEnds{
+				Leaderboard: leaaderboard,
+			},
+		},
+	}
 	wg := sync.WaitGroup{}
 	for _, player := range s.players {
 		player := player
-		msg := &pb.PlayResponse{
-			Msg: &pb.PlayResponse_GameEndsMsg{
-				GameEndsMsg: &pb.PlayResponse_GameEnds{
-					Leaderboard: leaaderboard,
-				},
-			},
-		}
 		wg.Add(1)
 		go func() {
 			err := player.stream.Send(msg)
@@ -323,6 +344,7 @@ func (s *Server) informAllEnd(leaaderboard []*pb.PlayResponse_Score) {
 	wg.Wait()
 }
 
+// Inform all players that the game has been interrupted
 func (s *Server) informAllInterrupt(reason string) {
 	msg := &pb.PlayResponse{
 		Msg: &pb.PlayResponse_StartInterruptedMsg{
@@ -346,6 +368,7 @@ func (s *Server) informAllInterrupt(reason string) {
 	wg.Wait()
 }
 
+// Remove player from the server in a thread-safe way
 func (s *Server) removePlayer(playerId string) {
 	log.Printf("Removing player %s\n", playerId)
 	s.mutex.Lock()
@@ -354,6 +377,7 @@ func (s *Server) removePlayer(playerId string) {
 	s.mutex.Unlock()
 }
 
+// Sends question to all players
 func (s *Server) sendAllQuestion(questionId string, question Question) {
 	msg := &pb.PlayResponse{
 		Msg: &pb.PlayResponse_QuestionMsg{
@@ -367,7 +391,7 @@ func (s *Server) sendAllQuestion(questionId string, question Question) {
 	}
 	for _, player := range s.players {
 		select {
-		case <-player.stream.Context().Done():
+		case <-player.stream.Context().Done(): // in case the player disconnects, remove them from the server
 			log.Printf("Player %s disconnected\n", player.Uuid)
 			s.removePlayer(player.Uuid)
 			return
@@ -381,6 +405,7 @@ func (s *Server) sendAllQuestion(questionId string, question Question) {
 	}
 }
 
+// Returns sorted leaderboard
 func (s *Server) getLeaderboard() []*pb.PlayResponse_Score {
 	leaderboard := make([]*pb.PlayResponse_Score, 0, len(s.players))
 	for _, p := range s.players {

@@ -7,6 +7,7 @@ import (
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
 	"log"
+	"os"
 	pb "pubSubQuiz/proto"
 	"time"
 )
@@ -31,16 +32,22 @@ func main() {
 	if err != nil {
 		panic(err)
 	}
+	// connect to the server and try to join the game
 	err = stream.Send(&pb.PlayRequest{
 		Msg: &pb.PlayRequest_JoinRequest{
 			JoinRequest: &pb.PlayRequest_Join{},
 		},
 	})
+	// if there is an error, stop here
 	if err != nil {
 		panic(err)
 	}
+
+	// start listening for user inputs
 	inputChan := make(chan string)
 	go listenForInputs(inputChan)
+
+	// start listening for server messages
 	for {
 		select {
 		case <-stream.Context().Done():
@@ -57,6 +64,8 @@ func main() {
 	}
 }
 
+// Go-routine that listens for user inputs into stdin
+// and sends them to the inputChan
 func listenForInputs(inputChan chan string) {
 	go func() {
 		for {
@@ -69,6 +78,7 @@ func listenForInputs(inputChan chan string) {
 	}()
 }
 
+// handleMessage handles the messages received from the server
 func handleMessage(msg *pb.PlayResponse, stream pb.Quiz_PlayClient, inputChan chan string) {
 	var err error
 	switch t := msg.Msg.(type) {
@@ -90,10 +100,12 @@ func handleMessage(msg *pb.PlayResponse, stream pb.Quiz_PlayClient, inputChan ch
 	}
 }
 
+// handleAnswerRejected handles the message when the server rejects an answer
 func handleAnswerRejected(msg *pb.PlayResponse_AnswerRejected) {
 	log.Printf("Answer rejected due: %s\n", msg.Reason)
 }
 
+// handleGameEnds handles the message when the game ends
 func handleGameEnds(msg *pb.PlayResponse_GameEnds) {
 	log.Printf("Game finished!\n")
 	log.Println("Leaderboard:")
@@ -104,30 +116,39 @@ func handleGameEnds(msg *pb.PlayResponse_GameEnds) {
 	log.Println("=================")
 }
 
+// handleGameStarts handles the message when the game starts
 func handleGameStarts(msg *pb.PlayResponse_GameStartsIn) {
 	log.Printf("\rGame starts in %.f seconds", msg.SecondsUntilStart)
 }
 
+// handleJoinResponse handles the message when the server responds to a join request
 func handleJoinResponse(r *pb.PlayResponse_JoinResponse) {
 	if r.Success {
 		log.Printf("Joined the quiz. Waiting for %d more players\n", r.TargetPlayers-r.CurrentPlayers)
 	} else {
 		log.Printf("Join rejected: %s\n", r.Reason)
+		// in case of rejection, exit the client
+		os.Exit(0)
 	}
 }
 
+// handleQuestion handles the message when the server sends a question
 func handleQuestion(question *pb.PlayResponse_QuizQuestion, stream pb.Quiz_PlayClient, inputChan chan string) error {
 	log.Printf("Question: %s\n", question.Question)
 	var err error
 	m := printAnswerOptions(question.Answers)
+
+	// create time-out context, cancelled when time is up
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second*time.Duration(question.QuestionTimeout))
 	defer cancel()
+	// loop until either time is up, or user submits a valid answer
 	for {
 		select {
 		case <-ctx.Done():
 			log.Println("You ran out of time!")
 			return nil
 		case userInput := <-inputChan:
+			// check if the user input is a valid answer
 			if answer, ok := m[userInput]; ok {
 				log.Printf("Submitting: %s\n", answer)
 				err = stream.Send(&pb.PlayRequest{
@@ -138,14 +159,15 @@ func handleQuestion(question *pb.PlayResponse_QuizQuestion, stream pb.Quiz_PlayC
 						},
 					},
 				})
+				return err
 			} else {
 				log.Printf("%s is not a valid answer", userInput)
 			}
-			return err
 		}
 	}
 }
 
+// printAnswerOptions prints available answer options and returns a map of the options for quick lookups
 func printAnswerOptions(answers []string) map[string]string {
 	m := make(map[string]string, len(answers))
 	for i, v := range answers {
@@ -156,6 +178,7 @@ func printAnswerOptions(answers []string) map[string]string {
 	return m
 }
 
+// handleStartInterrupted handles the message when the game is interrupted
 func handleStartInterrupted(msg *pb.PlayResponse_StartInterrupted) {
 	log.Printf("Game interrupted due to: %s\n", msg.Reason)
 }
